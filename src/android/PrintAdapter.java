@@ -8,7 +8,7 @@ import android.print.PrintAttributes;
 import android.print.PrintDocumentAdapter;
 import android.print.PrintDocumentInfo;
 import androidx.annotation.NonNull;
-import android.support.v4.print.PrintHelper;
+import android.support.v4.print.PrintHelper; 
 
 import java.io.FileOutputStream;
 import java.io.IOException;
