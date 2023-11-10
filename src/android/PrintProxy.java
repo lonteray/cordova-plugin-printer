@@ -7,7 +7,7 @@ import android.print.PageRange;
 import android.print.PrintAttributes;
 import android.print.PrintDocumentAdapter;
 import androidx.annotation.NonNull;
-import androidx.print.PrintHelper;
+import android.support.v4.print.PrintHelper;
 
 /**
  * Simple delegate class to have access to the onFinish method.
