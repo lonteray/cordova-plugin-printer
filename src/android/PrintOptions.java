@@ -21,158 +21,98 @@
 
 package de.appplant.cordova.plugin.printer;
 
+import android.os.Bundle;
+import android.os.CancellationSignal;
+import android.os.ParcelFileDescriptor;
+import android.print.PageRange;
 import android.print.PrintAttributes;
-import android.support.annotation.NonNull;
-import android.support.v4.print.PrintHelper;
+import android.print.PrintDocumentAdapter;
+import android.print.PrintDocumentInfo;
+import androidx.annotation.NonNull;
+import androidx.print.PrintHelper;
 
-import org.json.JSONObject;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 
-import static android.os.Build.VERSION.SDK_INT;
-import static android.print.PrintAttributes.DUPLEX_MODE_LONG_EDGE;
-import static android.print.PrintAttributes.DUPLEX_MODE_NONE;
-import static android.print.PrintAttributes.DUPLEX_MODE_SHORT_EDGE;
-import static android.print.PrintAttributes.Margins.NO_MARGINS;
-import static android.print.PrintAttributes.MediaSize.UNKNOWN_LANDSCAPE;
-import static android.print.PrintAttributes.MediaSize.UNKNOWN_PORTRAIT;
-import static android.print.PrintDocumentInfo.PAGE_COUNT_UNKNOWN;
-import static android.support.v4.print.PrintHelper.ORIENTATION_LANDSCAPE;
-import static android.support.v4.print.PrintHelper.ORIENTATION_PORTRAIT;
-import static android.support.v4.print.PrintHelper.SCALE_MODE_FILL;
-import static android.support.v4.print.PrintHelper.SCALE_MODE_FIT;
+import static android.print.PrintDocumentInfo.CONTENT_TYPE_DOCUMENT;
 
 /**
- * Wrapper for the print job settings.
+ * Document adapter to render and print PDF files.
  */
-class PrintOptions
-{
-    // The print job settings
-    private final @NonNull JSONObject spec;
+class PrintAdapter extends PrintDocumentAdapter {
+    // The name of the print job
+    private final @NonNull String jobName;
+
+    // Max page count
+    private final int pageCount;
+
+    // The input stream to render
+    private final @NonNull InputStream input;
+
+    // The callback to inform once the job is done
+    private final @NonNull PrintHelper.OnPrintFinishCallback callback;
 
     /**
      * Constructor
      *
-     * @param spec The print job settings.
+     * @param jobName   The name of the print job.
+     * @param pageCount The max page count.
+     * @param input     The input stream to render.
+     * @param callback  The callback to inform once the job is done.
      */
-    PrintOptions (@NonNull JSONObject spec)
-    {
-        this.spec = spec;
+    PrintAdapter(@NonNull String jobName, int pageCount, @NonNull InputStream input,
+            @NonNull PrintHelper.OnPrintFinishCallback callback) {
+        this.jobName = jobName;
+        this.pageCount = pageCount;
+        this.input = input;
+        this.callback = callback;
+    }
+
+    @Override
+    public void onLayout(PrintAttributes oldAttributes, PrintAttributes newAttributes,
+            CancellationSignal cancellationSignal, LayoutResultCallback callback, Bundle bundle) {
+        PrintDocumentInfo pdi;
+
+        if (cancellationSignal.isCanceled())
+            return;
+
+        pdi = new PrintDocumentInfo.Builder(jobName).setContentType(CONTENT_TYPE_DOCUMENT).setPageCount(pageCount)
+                .build();
+
+        boolean changed = !newAttributes.equals(oldAttributes);
+
+        callback.onLayoutFinished(pdi, changed);
+    }
+
+    @Override
+    public void onWrite(PageRange[] range, ParcelFileDescriptor dest, CancellationSignal cancellationSignal,
+            WriteResultCallback callback) {
+        if (cancellationSignal.isCanceled())
+            return;
+
+        OutputStream output = new FileOutputStream(dest.getFileDescriptor());
+
+        try {
+            PrintIO.copy(input, output);
+        } catch (IOException e) {
+            callback.onWriteFailed(e.getMessage());
+            return;
+        }
+
+        callback.onWriteFinished(new PageRange[] { PageRange.ALL_PAGES });
     }
 
     /**
-     * Returns the name for the print job.
+     * Closes the input stream and invokes the callback.
      */
-    @NonNull String getJobName()
-    {
-        String jobName = spec.optString("name");
+    @Override
+    public void onFinish() {
+        super.onFinish();
 
-        if (jobName == null || jobName.isEmpty())
-        {
-            jobName = "Printer Plugin Job #" + System.currentTimeMillis();
-        }
+        PrintIO.close(input);
 
-        return jobName;
-    }
-
-    /**
-     * Returns the max page count.
-     */
-    int getPageCount()
-    {
-        int count = spec.optInt("pageCount", PAGE_COUNT_UNKNOWN);
-
-        return count <= 0 ? PAGE_COUNT_UNKNOWN : count;
-    }
-
-    /**
-     * Converts the options into a PrintAttributes object.
-     */
-    @NonNull PrintAttributes toPrintAttributes()
-    {
-        PrintAttributes.Builder builder = new PrintAttributes.Builder();
-        Object margin                   = spec.opt("margin");
-
-        switch (spec.optString("orientation"))
-        {
-            case "landscape":
-                builder.setMediaSize(UNKNOWN_LANDSCAPE);
-                break;
-            case "portrait":
-                builder.setMediaSize(UNKNOWN_PORTRAIT);
-                break;
-        }
-
-        if (spec.has("monochrome"))
-        {
-            if (spec.optBoolean("monochrome"))
-            {
-                builder.setColorMode(PrintAttributes.COLOR_MODE_MONOCHROME);
-            }
-            else
-            {
-                builder.setColorMode(PrintAttributes.COLOR_MODE_COLOR);
-            }
-        }
-
-        if (margin instanceof Boolean && !((Boolean) margin))
-        {
-            builder.setMinMargins(NO_MARGINS);
-        }
-
-        if (SDK_INT >= 23)
-        {
-            switch (spec.optString("duplex"))
-            {
-                case "long":
-                    builder.setDuplexMode(DUPLEX_MODE_LONG_EDGE);
-                    break;
-                case "short":
-                    builder.setDuplexMode(DUPLEX_MODE_SHORT_EDGE);
-                    break;
-                case "none":
-                    builder.setDuplexMode(DUPLEX_MODE_NONE);
-                    break;
-            }
-        }
-
-        return builder.build();
-    }
-
-    /**
-     * Tweaks the printer helper depending on the job spec.
-     *
-     * @param printer The printer to decorate.
-     */
-    void decoratePrintHelper (@NonNull PrintHelper printer)
-    {
-        switch (spec.optString("orientation"))
-        {
-            case "landscape":
-                printer.setOrientation(ORIENTATION_LANDSCAPE);
-                break;
-            case "portrait":
-                printer.setOrientation(ORIENTATION_PORTRAIT);
-                break;
-        }
-
-        if (spec.has("monochrome"))
-        {
-            if (spec.optBoolean("monochrome"))
-            {
-                printer.setColorMode(PrintHelper.COLOR_MODE_MONOCHROME);
-            }
-            else
-            {
-                printer.setColorMode(PrintHelper.COLOR_MODE_COLOR);
-            }
-        }
-
-        if (spec.optBoolean("autoFit", true))
-        {
-            printer.setScaleMode(SCALE_MODE_FIT);
-        }
-        else
-        {
-            printer.setScaleMode(SCALE_MODE_FILL);
-        }
+        callback.onFinish();
     }
 }
