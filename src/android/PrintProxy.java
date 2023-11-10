@@ -27,16 +27,29 @@ import android.os.ParcelFileDescriptor;
 import android.print.PageRange;
 import android.print.PrintAttributes;
 import android.print.PrintDocumentAdapter;
-import android.support.annotation.NonNull;
-import android.support.v4.print.PrintHelper;
+import android.print.PrintDocumentInfo;
+import androidx.annotation.NonNull;
+import androidx.print.PrintHelper;
+
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+
+import static android.print.PrintDocumentInfo.CONTENT_TYPE_DOCUMENT;
 
 /**
- * Simple delegate class to have access to the onFinish method.
+ * Document adapter to render and print PDF files.
  */
-class PrintProxy extends PrintDocumentAdapter
-{
-    // Holds the delegate object
-    private final @NonNull PrintDocumentAdapter delegate;
+class PrintAdapter extends PrintDocumentAdapter {
+    // The name of the print job
+    private final @NonNull String jobName;
+
+    // Max page count
+    private final int pageCount;
+
+    // The input stream to render
+    private final @NonNull InputStream input;
 
     // The callback to inform once the job is done
     private final @NonNull PrintHelper.OnPrintFinishCallback callback;
@@ -44,41 +57,62 @@ class PrintProxy extends PrintDocumentAdapter
     /**
      * Constructor
      *
-     * @param adapter  The real adapter.
-     * @param callback The callback to invoke once the printing is done.
+     * @param jobName   The name of the print job.
+     * @param pageCount The max page count.
+     * @param input     The input stream to render.
+     * @param callback  The callback to inform once the job is done.
      */
-    PrintProxy (@NonNull PrintDocumentAdapter adapter,
-                @NonNull PrintHelper.OnPrintFinishCallback callback)
-    {
-        this.delegate = adapter;
+    PrintAdapter(@NonNull String jobName, int pageCount, @NonNull InputStream input,
+            @NonNull PrintHelper.OnPrintFinishCallback callback) {
+        this.jobName = jobName;
+        this.pageCount = pageCount;
+        this.input = input;
         this.callback = callback;
     }
 
     @Override
-    public void onLayout (PrintAttributes oldAttributes,
-                          PrintAttributes newAttributes,
-                          CancellationSignal cancellationSignal,
-                          LayoutResultCallback callback,
-                          Bundle bundle)
-    {
-        delegate.onLayout(oldAttributes, newAttributes, cancellationSignal, callback, bundle);
+    public void onLayout(PrintAttributes oldAttributes, PrintAttributes newAttributes,
+            CancellationSignal cancellationSignal, LayoutResultCallback callback, Bundle bundle) {
+        PrintDocumentInfo pdi;
+
+        if (cancellationSignal.isCanceled())
+            return;
+
+        pdi = new PrintDocumentInfo.Builder(jobName).setContentType(CONTENT_TYPE_DOCUMENT).setPageCount(pageCount)
+                .build();
+
+        boolean changed = !newAttributes.equals(oldAttributes);
+
+        callback.onLayoutFinished(pdi, changed);
     }
 
     @Override
-    public void onWrite (PageRange[] range,
-                         ParcelFileDescriptor dest,
-                         CancellationSignal cancellationSignal,
-                         WriteResultCallback callback)
-    {
-        delegate.onWrite(range, dest, cancellationSignal, callback);
+    public void onWrite(PageRange[] range, ParcelFileDescriptor dest, CancellationSignal cancellationSignal,
+            WriteResultCallback callback) {
+        if (cancellationSignal.isCanceled())
+            return;
+
+        OutputStream output = new FileOutputStream(dest.getFileDescriptor());
+
+        try {
+            PrintIO.copy(input, output);
+        } catch (IOException e) {
+            callback.onWriteFailed(e.getMessage());
+            return;
+        }
+
+        callback.onWriteFinished(new PageRange[] { PageRange.ALL_PAGES });
     }
 
     /**
-     * Invokes the callback.
+     * Closes the input stream and invokes the callback.
      */
     @Override
-    public void onFinish () {
+    public void onFinish() {
         super.onFinish();
+
+        PrintIO.close(input);
+
         callback.onFinish();
     }
 }
