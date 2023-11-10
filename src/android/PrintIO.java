@@ -21,98 +21,248 @@
 
 package de.appplant.cordova.plugin.printer;
 
-import android.os.Bundle;
-import android.os.CancellationSignal;
-import android.os.ParcelFileDescriptor;
-import android.print.PageRange;
-import android.print.PrintAttributes;
-import android.print.PrintDocumentAdapter;
-import android.print.PrintDocumentInfo;
+import android.content.Context;
+import android.content.res.AssetManager;
+import android.content.res.Resources;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import androidx.annotation.NonNull;
-import androidx.print.PrintHelper;
+import androidx.annotation.Nullable;
+import android.util.Base64;
 
-import java.io.FileOutputStream;
+import java.io.ByteArrayInputStream;
+import java.io.Closeable;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 
-import static android.print.PrintDocumentInfo.CONTENT_TYPE_DOCUMENT;
-
 /**
- * Document adapter to render and print PDF files.
+ * Provides IO utility functions to deal with the resources.
  */
-class PrintAdapter extends PrintDocumentAdapter {
-    // The name of the print job
-    private final @NonNull String jobName;
-
-    // Max page count
-    private final int pageCount;
-
-    // The input stream to render
-    private final @NonNull InputStream input;
-
-    // The callback to inform once the job is done
-    private final @NonNull PrintHelper.OnPrintFinishCallback callback;
+class PrintIO {
+    // Application context
+    private final @NonNull Context context;
 
     /**
-     * Constructor
+     * Initializes the asset utils.
      *
-     * @param jobName   The name of the print job.
-     * @param pageCount The max page count.
-     * @param input     The input stream to render.
-     * @param callback  The callback to inform once the job is done.
+     * @param ctx The application context.
      */
-    PrintAdapter(@NonNull String jobName, int pageCount, @NonNull InputStream input,
-            @NonNull PrintHelper.OnPrintFinishCallback callback) {
-        this.jobName = jobName;
-        this.pageCount = pageCount;
-        this.input = input;
-        this.callback = callback;
+    PrintIO(@NonNull Context ctx) {
+        context = ctx;
     }
 
-    @Override
-    public void onLayout(PrintAttributes oldAttributes, PrintAttributes newAttributes,
-            CancellationSignal cancellationSignal, LayoutResultCallback callback, Bundle bundle) {
-        PrintDocumentInfo pdi;
+    /**
+     * Copies content of input stream to output stream.
+     *
+     * @param input  The readable input stream.
+     * @param output The writable output stream.
+     *
+     * @throws IOException If the input stream is not readable, or the output stream
+     *                     is not writable.
+     */
+    static void copy(@NonNull InputStream input, @NonNull OutputStream output) throws IOException {
+        byte[] buf = new byte[input.available()];
+        int bytesRead;
 
-        if (cancellationSignal.isCanceled())
-            return;
+        input.mark(Integer.MAX_VALUE);
 
-        pdi = new PrintDocumentInfo.Builder(jobName).setContentType(CONTENT_TYPE_DOCUMENT).setPageCount(pageCount)
-                .build();
-
-        boolean changed = !newAttributes.equals(oldAttributes);
-
-        callback.onLayoutFinished(pdi, changed);
-    }
-
-    @Override
-    public void onWrite(PageRange[] range, ParcelFileDescriptor dest, CancellationSignal cancellationSignal,
-            WriteResultCallback callback) {
-        if (cancellationSignal.isCanceled())
-            return;
-
-        OutputStream output = new FileOutputStream(dest.getFileDescriptor());
-
-        try {
-            PrintIO.copy(input, output);
-        } catch (IOException e) {
-            callback.onWriteFailed(e.getMessage());
-            return;
+        while ((bytesRead = input.read(buf)) > 0) {
+            output.write(buf, 0, bytesRead);
         }
 
-        callback.onWriteFinished(new PageRange[] { PageRange.ALL_PAGES });
+        input.reset();
+        close(output);
     }
 
     /**
-     * Closes the input stream and invokes the callback.
+     * Closes the stream.
+     *
+     * @param stream The stream to close.
      */
-    @Override
-    public void onFinish() {
-        super.onFinish();
+    static void close(@NonNull Closeable stream) {
+        try {
+            stream.close();
+        } catch (IOException e) {
+            // ignore
+        }
+    }
 
-        PrintIO.close(input);
+    /**
+     * Opens an file given as a file:/// path.
+     *
+     * @param path The path to the file.
+     *
+     * @return An open IO stream or null if the file does not exist.
+     */
+    @Nullable
+    InputStream openFile(@NonNull String path) {
+        String absPath = path.substring(7);
 
-        callback.onFinish();
+        try {
+            return new FileInputStream(absPath);
+        } catch (FileNotFoundException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Decodes an file given as a file:/// path to a bitmap.
+     *
+     * @param path The path to the file.
+     *
+     * @return A bitmap or null if the path is not valid
+     */
+    @Nullable
+    Bitmap decodeFile(@NonNull String path) {
+        String absPath = path.substring(7);
+
+        return BitmapFactory.decodeFile(absPath);
+    }
+
+    /**
+     * Opens an asset file given as a file:// path.
+     *
+     * @param path The path to the asset.
+     *
+     * @return An open IO stream or null if the file does not exist.
+     */
+    @Nullable
+    InputStream openAsset(@NonNull String path) {
+        String resPath = path.replaceFirst("file:/", "www");
+
+        try {
+            return getAssets().open(resPath);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Decodes an asset file given as a file:// path to a bitmap.
+     *
+     * @param path The path to the asset.
+     *
+     * @return A bitmap or null if the path is not valid
+     */
+    @Nullable
+    Bitmap decodeAsset(@NonNull String path) {
+        InputStream stream = openAsset(path);
+        Bitmap bitmap;
+
+        if (stream == null)
+            return null;
+
+        bitmap = BitmapFactory.decodeStream(stream);
+
+        close(stream);
+
+        return bitmap;
+    }
+
+    /**
+     * Opens a resource file given as a res:// path.
+     *
+     * @param path The path to the resource.
+     *
+     * @return An open IO stream or null if the file does not exist.
+     */
+    @NonNull
+    InputStream openResource(@NonNull String path) {
+        String resPath = path.substring(6);
+        int resId = getResId(resPath);
+
+        return getResources().openRawResource(resId);
+    }
+
+    /**
+     * Decodes a resource given as a res:// path to a bitmap.
+     *
+     * @param path The path to the resource.
+     *
+     * @return A bitmap or null if the path is not valid
+     */
+    @Nullable
+    Bitmap decodeResource(@NonNull String path) {
+        String data = path.substring(9);
+        byte[] bytes = Base64.decode(data, 0);
+
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+    }
+
+    /**
+     * Opens a resource file given as a res:// path.
+     *
+     * @param path The path to the resource.
+     *
+     * @return An open IO stream or null if the file does not exist.
+     */
+    @NonNull
+    InputStream openBase64(@NonNull String path) {
+        String data = path.substring(9);
+        byte[] bytes = Base64.decode(data, 0);
+
+        return new ByteArrayInputStream(bytes);
+    }
+
+    /**
+     * Decodes a resource given as a base64:// string to a bitmap.
+     *
+     * @param path The given relative path.
+     *
+     * @return A bitmap or null if the path is not valid
+     */
+    @Nullable
+    Bitmap decodeBase64(@NonNull String path) {
+        String data = path.substring(9);
+        byte[] bytes = Base64.decode(data, 0);
+
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+    }
+
+    /**
+     * Returns the resource ID for the given resource path.
+     *
+     * @return The resource ID for the given resource.
+     */
+    private int getResId(@NonNull String resPath) {
+        Resources res = getResources();
+        String pkgName = context.getPackageName();
+        String dirName = "drawable";
+        String fileName = resPath;
+
+        if (resPath.contains("/")) {
+            dirName = resPath.substring(0, resPath.lastIndexOf('/'));
+            fileName = resPath.substring(resPath.lastIndexOf('/') + 1);
+        }
+
+        String resName = fileName.substring(0, fileName.lastIndexOf('.'));
+        int resId = res.getIdentifier(resName, dirName, pkgName);
+
+        if (resId == 0) {
+            resId = res.getIdentifier(resName, "mipmap", pkgName);
+        }
+
+        if (resId == 0) {
+            resId = res.getIdentifier(resName, "drawable", pkgName);
+        }
+
+        return resId;
+    }
+
+    /**
+     * Returns the asset manager for the app.
+     */
+    private AssetManager getAssets() {
+        return context.getAssets();
+    }
+
+    /**
+     * Returns the resource bundle for the app.
+     */
+    private Resources getResources() {
+        return context.getResources();
     }
 }

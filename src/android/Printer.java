@@ -21,98 +21,109 @@
 
 package de.appplant.cordova.plugin.printer;
 
-import android.os.Bundle;
-import android.os.CancellationSignal;
-import android.os.ParcelFileDescriptor;
-import android.print.PageRange;
-import android.print.PrintAttributes;
-import android.print.PrintDocumentAdapter;
-import android.print.PrintDocumentInfo;
 import androidx.annotation.NonNull;
-import androidx.print.PrintHelper;
+import androidx.annotation.Nullable;
+import android.webkit.WebView;
 
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-
-import static android.print.PrintDocumentInfo.CONTENT_TYPE_DOCUMENT;
+import org.apache.cordova.CallbackContext;
+import org.apache.cordova.CordovaPlugin;
+import org.apache.cordova.PluginResult;
+import org.apache.cordova.PluginResult.Status;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 /**
- * Document adapter to render and print PDF files.
+ * Plugin to print HTML documents. Therefore it creates an invisible web view
+ * that loads the markup data. Once the page has been fully rendered it takes
+ * the print adapter of that web view and initializes a print job.
  */
-class PrintAdapter extends PrintDocumentAdapter {
-    // The name of the print job
-    private final @NonNull String jobName;
-
-    // Max page count
-    private final int pageCount;
-
-    // The input stream to render
-    private final @NonNull InputStream input;
-
-    // The callback to inform once the job is done
-    private final @NonNull PrintHelper.OnPrintFinishCallback callback;
-
+public final class Printer extends CordovaPlugin {
     /**
-     * Constructor
+     * Executes the request.
      *
-     * @param jobName   The name of the print job.
-     * @param pageCount The max page count.
-     * @param input     The input stream to render.
-     * @param callback  The callback to inform once the job is done.
+     * This method is called from the WebView thread. To do a non-trivial amount of
+     * work, use: cordova.getThreadPool().execute(runnable);
+     *
+     * To run on the UI thread, use: cordova.getActivity().runOnUiThread(runnable);
+     *
+     * @param action   The action to execute.
+     * @param args     The exec() arguments in JSON form.
+     * @param callback The callback context used when calling back into JavaScript.
+     *
+     * @return Whether the action was valid.
      */
-    PrintAdapter(@NonNull String jobName, int pageCount, @NonNull InputStream input,
-            @NonNull PrintHelper.OnPrintFinishCallback callback) {
-        this.jobName = jobName;
-        this.pageCount = pageCount;
-        this.input = input;
-        this.callback = callback;
-    }
-
     @Override
-    public void onLayout(PrintAttributes oldAttributes, PrintAttributes newAttributes,
-            CancellationSignal cancellationSignal, LayoutResultCallback callback, Bundle bundle) {
-        PrintDocumentInfo pdi;
+    public boolean execute(String action, JSONArray args, CallbackContext callback) {
+        boolean valid = true;
 
-        if (cancellationSignal.isCanceled())
-            return;
-
-        pdi = new PrintDocumentInfo.Builder(jobName).setContentType(CONTENT_TYPE_DOCUMENT).setPageCount(pageCount)
-                .build();
-
-        boolean changed = !newAttributes.equals(oldAttributes);
-
-        callback.onLayoutFinished(pdi, changed);
-    }
-
-    @Override
-    public void onWrite(PageRange[] range, ParcelFileDescriptor dest, CancellationSignal cancellationSignal,
-            WriteResultCallback callback) {
-        if (cancellationSignal.isCanceled())
-            return;
-
-        OutputStream output = new FileOutputStream(dest.getFileDescriptor());
-
-        try {
-            PrintIO.copy(input, output);
-        } catch (IOException e) {
-            callback.onWriteFailed(e.getMessage());
-            return;
+        if (action.equalsIgnoreCase("check")) {
+            check(args.optString(0), callback);
+        } else if (action.equalsIgnoreCase("types")) {
+            types(callback);
+        } else if (action.equalsIgnoreCase("print")) {
+            print(args.optString(0), args.optJSONObject(1), callback);
+        } else {
+            valid = false;
         }
 
-        callback.onWriteFinished(new PageRange[] { PageRange.ALL_PAGES });
+        return valid;
     }
 
     /**
-     * Closes the input stream and invokes the callback.
+     * If the print framework is able to render the referenced file.
+     *
+     * @param item     Any kind of URL like file://, file:///, res:// or base64://
+     * @param callback The plugin function to invoke with the result.
      */
-    @Override
-    public void onFinish() {
-        super.onFinish();
+    private void check(@Nullable String item, CallbackContext callback) {
+        cordova.getThreadPool().execute(() -> {
+            PrintManager pm = new PrintManager(cordova.getContext());
+            boolean printable = pm.canPrintItem(item);
 
-        PrintIO.close(input);
+            sendPluginResult(callback, printable);
+        });
+    }
 
-        callback.onFinish();
+    /**
+     * List of all printable document types (utis).
+     *
+     * @param callback The plugin function to invoke with the result.
+     */
+    private void types(CallbackContext callback) {
+        cordova.getThreadPool().execute(() -> {
+            JSONArray utis = PrintManager.getPrintableTypes();
+
+            PluginResult res = new PluginResult(Status.OK, utis);
+
+            callback.sendPluginResult(res);
+        });
+    }
+
+    /**
+     * Sends the provided content to the printing controller and opens them.
+     *
+     * @param content  The content or file to print.
+     * @param settings Additional settings how to render the content.
+     * @param callback The plugin function to invoke with the result.
+     */
+    private void print(@Nullable String content, JSONObject settings, CallbackContext callback) {
+        cordova.getThreadPool().execute(() -> {
+            PrintManager pm = new PrintManager(cordova.getContext());
+            WebView view = (WebView) webView.getView();
+
+            pm.print(content, settings, view, (boolean completed) -> sendPluginResult(callback, completed));
+        });
+    }
+
+    /**
+     * Sends the result back to the client.
+     *
+     * @param callback The callback to invoke.
+     * @param value    The argument to pass with.
+     */
+    private void sendPluginResult(@NonNull CallbackContext callback, boolean value) {
+        PluginResult result = new PluginResult(Status.OK, value);
+
+        callback.sendPluginResult(result);
     }
 }
