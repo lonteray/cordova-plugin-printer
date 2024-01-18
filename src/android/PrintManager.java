@@ -8,7 +8,7 @@ import android.print.PrintDocumentAdapter;
 import android.print.PrintJob;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import android.support.v4.print.PrintHelper;
+import androidx.v4.print.PrintHelper;
 import android.webkit.CookieManager;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
