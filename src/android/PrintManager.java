@@ -13,6 +13,7 @@ import android.webkit.CookieManager;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.util.Log;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -308,7 +309,12 @@ class PrintManager {
      */
     private boolean isPrintJobCompleted(@NonNull String jobName) {
         PrintJob job = findPrintJobByName(jobName);
-
+        if(job == null) {
+            Log.d("APDebug", "PrintJob is null");
+        }
+        else {
+            Log.d("APDebug", "PrintJob state is " + job.getInfo().getState().toString());
+        }
         return (job == null || job.getInfo().getState() <= STATE_COMPLETED);
     }
 
