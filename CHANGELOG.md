@@ -1,5 +1,8 @@
 ## ChangeLog
 
+#### Version 0.8.1 (04.08.2026)
+- [bugfix:] Added missing `UIKit`/`Foundation` imports to the iOS headers to fix compilation with the Swift Package Manager
+
 #### Version 0.8.0 (01.03.2019)
 - Most parts of the code has been rewritten
 - Added support for Android 8+
