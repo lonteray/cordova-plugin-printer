@@ -1,6 +1,6 @@
 {
   "name": "cordova-plugin-printer",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "Prints HTML documents",
   "cordova": {
     "id": "cordova-plugin-printer",
